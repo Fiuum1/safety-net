@@ -308,10 +308,37 @@ contract SafetyNet is ISafetyNet, ReentrancyGuard, OwnableUpgradeable {
       isExecuted[_idRequest] = true;
       emit WithdrawalAutoExecuted(_idRequest, _request.owner, _request.amount);
 
-      IERC20(safetyNet.token).safeTransfer(_request.owner, _request.amount);
+      IERC20(_safetyNet.token).safeTransfer(_request.owner, _request.amount);
     }
   }
 
+  function vote(uint256 _requestId, bool _vote) external override nonReentrant {
+    if (!isMember[requests[_requestId].safetyNetId][msg.sender]) revert NotMember();
+    if (requestVotes[_requestId][msg.sender]) revert AlreadyVoted();
+    if (!_isVotingOngoing(_requestId)) revert VotingWindowClosed();
+    if (isExecuted[_requestId]) revert AlreadyExecuted();
+
+    if (_vote) {
+      requests[_requestId].yesVotes++;
+    } else {
+      requests[_requestId].noVotes++;
+    }
+    requestVotes[_requestId][msg.sender] = true;
+    emit Voted(_requestId, msg.sender, _vote);
+
+    // Check if consensus has been reached after this vote
+    Request memory _request = requests[_requestId];
+    SafetyNet memory _safetyNet = safetyNets[_request.safetyNetId];
+
+    if (_request.yesVotes > _safetyNet.members.length * _safetyNet.consensusThreshold / 100) {
+      // Consensus reached - execute withdrawal immediately
+      _deduct(_request.safetyNetId, _request.owner, _request.amount);
+
+      isExecuted[_requestId] = true;
+      emit WithdrawalApproved(_requestId, _request.owner, _request.amount);
+      IERC20(_safetyNet.token).safeTransfer(_request.owner, _request.amount);
+    }
+  }
   /// @inheritdoc ISafetyNet
   function isTokenAllowed(address _token) external view override returns (bool) {
     return allowedTokens[_token];
